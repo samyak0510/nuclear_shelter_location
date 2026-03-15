@@ -1,5 +1,12 @@
-# Ignore virtual environment
-nsl-venv
+# Data files
+**/*.csv
+**/*.xlsx
+**/*.xls
 
-# Ignore data files
-data
+# Python auto-generated files
+*.egg-info/
+__pycache__/
+*.pyc
+.eggs/
+dist/
+build/
