@@ -1,111 +1,100 @@
-import numpy as np
-import pandas as pd
-from src.utils import haversine_distance
+"""
+baseline.py — Greedy Heuristic Baseline for the UFLP.
 
-def greedy_heuristic(zip_codes, targets, infra_scores, max_shelters=100, service_radius=50):
+Iteratively selects the safe ZIP code that covers the most
+uncovered population until max_shelters is reached.
+
+Uses sparse coverage matrix for vectorised marginal-gain calculation.
+"""
+
+import numpy as np
+from scipy import sparse
+
+
+def greedy_heuristic(populations, coverage_matrix, infra_scores,
+                     max_shelters=100, w_cov=0.7, w_infra=0.2, w_cost=0.1):
     """
-    Greedy Baseline Heuristic for UFLP.
-    
-    Logic:
-    1. Filter out unsafe zones (within 15 miles of targets).
-    2. Iteratively select the safe zip code that covers the most 
-       *uncovered* population until max_shelters is reached.
-    
-    Args:
-        zip_codes (pd.DataFrame): Census data with lat, lon, population.
-        targets (list): List of urban target dicts with lat, lon.
-        infra_scores (np.array): Infrastructure score per zip code.
-        max_shelters (int): Budget constraint (number of shelters to build).
-        service_radius (int): Miles within which a shelter covers a population.
-        
-    Returns:
-        tuple: (chromosome_binary_array, final_fitness_score)
+    Greedy Baseline for UFLP (vectorised).
+
+    Parameters
+    ----------
+    populations      : 1-D array (N,) — population per candidate ZIP
+    coverage_matrix  : sparse bool (N, N) — coverage adjacency
+    infra_scores     : 1-D array (N,) — infrastructure scores in [0,1]
+    max_shelters     : int — budget constraint
+    w_cov, w_infra, w_cost : fitness weights (same as GA's fitness)
+
+    Returns
+    -------
+    chromosome : 1-D int array (N,) — binary shelter placement
+    fitness    : float — evaluated fitness score
     """
-    print(f"Running Greedy Baseline (k={max_shelters})...")
-    
-    n = len(zip_codes)
-    chromosome = np.zeros(n, dtype=int)
-    
-    # 1. Identify Safe Zones (Hard Constraint)
-    # Re-implementing safety check here for independence, 
-    # though you could import from fitness.py
-    safe_mask = np.ones(n, dtype=bool)
-    for i in range(n):
-        z_lat, z_lon = zip_codes.iloc[i]['lat'], zip_codes.iloc[i]['lon']
-        for target in targets:
-            dist = haversine_distance(z_lat, z_lon, target['lat'], target['lon'])
-            if dist < 15: # 15-mile exclusion
-                safe_mask[i] = False
-                break
-    
-    # Get indices of safe zip codes
-    safe_indices = np.where(safe_mask)[0]
-    
-    # 2. Greedy Selection Loop
-    # Track which population centers are already covered
-    covered_population = np.zeros(n, dtype=bool)
+    n = len(populations)
+    total_pop = populations.sum()
+    chromosome = np.zeros(n, dtype=np.int8)
+
+    print(f"Running Greedy Baseline (budget = {max_shelters} shelters)...")
+
+    # Pre-compute: coverage_matrix.T @ pop gives "how much population
+    # shelter j covers" — but we need *marginal* (uncovered) gain.
+    # We'll work with a 'remaining_pop' vector and update it.
+
+    remaining_pop = populations.copy()  # still-uncovered pop per ZIP
     selected_indices = []
-    
-    # Pre-calculate distances matrix for safe zones only (Optimization for speed)
-    # Note: For 30k zip codes, this matrix is large. 
-    # For the starter code, we compute on the fly or limit safe_indices.
-    
+
+    # Convert coverage to CSC for efficient column access
+    cov_csc = coverage_matrix.tocsc()
+
     for k in range(max_shelters):
-        best_idx = -1
-        best_gain = -1
-        
-        # Find the safe zip code that covers the most currently UNCOVERED population
-        for idx in safe_indices:
-            if idx in selected_indices:
-                continue
-                
-            s_lat = zip_codes.iloc[idx]['lat']
-            s_lon = zip_codes.iloc[idx]['lon']
-            
-            # Calculate marginal gain (new population covered by this shelter)
-            current_gain = 0
-            for j in range(n):
-                if covered_population[j]:
-                    continue # Already covered
-                
-                # Check if this new shelter covers zip code j
-                dist = haversine_distance(s_lat, s_lon, 
-                                          zip_codes.iloc[j]['lat'], 
-                                          zip_codes.iloc[j]['lon'])
-                if dist <= service_radius:
-                    current_gain += zip_codes.iloc[j]['population']
-            
-            # Add infrastructure score as a tie-breaker/small bonus
-            current_gain += infra_scores[idx] * 100 
-            
-            if current_gain > best_gain:
-                best_gain = current_gain
-                best_idx = idx
-        
-        if best_idx != -1:
-            selected_indices.append(best_idx)
-            chromosome[best_idx] = 1
-            
-            # Mark population as covered by this new shelter
-            s_lat = zip_codes.iloc[best_idx]['lat']
-            s_lon = zip_codes.iloc[best_idx]['lon']
-            for j in range(n):
-                dist = haversine_distance(s_lat, s_lon, 
-                                          zip_codes.iloc[j]['lat'], 
-                                          zip_codes.iloc[j]['lon'])
-                if dist <= service_radius:
-                    covered_population[j] = True
-        else:
-            print("No more valid shelters found.")
+        # Marginal gain for each candidate = sum of remaining_pop covered
+        # cov_csc[:, j].T @ remaining_pop = marginal pop gain of opening j
+        # Vectorise: gains = cov_csc.T @ remaining_pop (shape: N,)
+        gains = np.array(cov_csc.T.dot(remaining_pop)).flatten()
+
+        # Zero out already-selected shelters
+        if selected_indices:
+            gains[selected_indices] = -1
+
+        # Add small infrastructure tiebreaker
+        gains += infra_scores * 10
+
+        best_idx = np.argmax(gains)
+        best_gain = gains[best_idx]
+
+        if best_gain <= 0:
+            print(f"  Stopped early at iteration {k} (no improvement).")
             break
-            
-    # 3. Calculate Final Fitness using the same logic as GA
-    # (Importing FitnessFunction class would be better, but duplicating for standalone clarity)
-    total_covered_pop = np.sum(zip_codes['population'].values[covered_population])
-    avg_infra = np.mean(infra_scores[selected_indices]) if selected_indices else 0
-    final_score = (total_covered_pop / 1000) + (avg_infra * 100)
-    
-    print(f"Greedy Baseline Complete. Selected {len(selected_indices)} shelters.")
-    print(f"Greedy Fitness Score: {final_score}")
-    
-    return chromosome, final_score
+
+        selected_indices.append(best_idx)
+        chromosome[best_idx] = 1
+
+        # Zero out the population covered by this new shelter
+        # so it doesn't count as marginal gain in future steps
+        covered_by_j = np.array(cov_csc[:, best_idx].toarray()).flatten().astype(bool)
+        remaining_pop[covered_by_j] = 0.0
+
+        if (k + 1) % 50 == 0 or (k + 1) == max_shelters:
+            covered_so_far = total_pop - remaining_pop.sum()
+            cov_pct = covered_so_far / total_pop * 100
+            print(f"  Greedy iter {k+1}: {cov_pct:.1f}% population covered")
+
+    # Final fitness calculation (same formula as GA)
+    selected = np.array(selected_indices)
+    if len(selected) == 0:
+        return chromosome, 0.0
+
+    covered_mask = np.array(
+        coverage_matrix[:, selected].sum(axis=1)
+    ).flatten() > 0
+    covered_pop = populations[covered_mask].sum()
+    coverage_ratio = covered_pop / total_pop if total_pop > 0 else 0
+
+    infra_avg = infra_scores[selected].mean()
+    cost_ratio = len(selected) / n
+
+    fitness = w_cov * coverage_ratio + w_infra * infra_avg - w_cost * cost_ratio
+
+    print(f"  Greedy Done: {len(selected)} shelters, "
+          f"coverage={coverage_ratio*100:.1f}%, fitness={fitness:.4f}")
+
+    return chromosome, fitness

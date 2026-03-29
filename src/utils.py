@@ -1,34 +1,50 @@
+"""
+utils.py — Vectorized distance calculations and helper functions.
+"""
+
 import numpy as np
-from shapely.geometry import Point
-from shapely.ops import transform
-from functools import partial
-import pyproj
+
 
 def haversine_distance(lat1, lon1, lat2, lon2):
-    """Calculate distance between two points in miles."""
-    R = 3959  # Earth radius in miles
+    """
+    Calculate the great-circle distance in miles between two points
+    (or arrays of points) on Earth.
+
+    Accepts scalars or numpy arrays.
+    """
+    R = 3959.0  # Earth radius in miles
+
     phi1 = np.radians(lat1)
     phi2 = np.radians(lat2)
-    delta_phi = np.radians(lat2 - lat1)
-    delta_lambda = np.radians(lon2 - lon1)
-    
-    a = np.sin(delta_phi/2.0)**2 + np.cos(phi1) * np.cos(phi2) * np.sin(delta_lambda/2.0)**2
-    c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
-    
+    dphi = np.radians(lat2 - lat1)
+    dlambda = np.radians(lon2 - lon1)
+
+    a = np.sin(dphi / 2.0) ** 2 + np.cos(phi1) * np.cos(phi2) * np.sin(dlambda / 2.0) ** 2
+    c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+
     return R * c
 
-def create_safety_mask(zip_codes, targets, exclusion_radius_miles=15):
+
+def haversine_distance_matrix(lats1, lons1, lats2, lons2):
     """
-    Returns a boolean mask where True means the zip code is SAFE 
-    (outside the exclusion radius of any target).
+    Compute pairwise distances (miles) between two lists of coordinates.
+
+    Parameters
+    ----------
+    lats1, lons1 : 1-D arrays of shape (N,)
+    lats2, lons2 : 1-D arrays of shape (M,)
+
+    Returns
+    -------
+    dist_matrix : ndarray of shape (N, M)
+        dist_matrix[i, j] = haversine distance from point i to point j.
     """
-    mask = np.ones(len(zip_codes), dtype=bool)
-    
-    for i, zip_row in zip_codes.iterrows():
-        z_lat, z_lon = zip_row['lat'], zip_row['lon']
-        for target in targets:
-            dist = haversine_distance(z_lat, z_lon, target['lat'], target['lon'])
-            if dist < exclusion_radius_miles:
-                mask[i] = False
-                break
-    return mask
+    R = 3959.0
+    phi1 = np.radians(lats1)[:, None]          # (N, 1)
+    phi2 = np.radians(lats2)[None, :]          # (1, M)
+    dphi = phi2 - phi1                          # (N, M)
+    dlambda = np.radians(lons2)[None, :] - np.radians(lons1)[:, None]  # (N, M)
+
+    a = np.sin(dphi / 2.0) ** 2 + np.cos(phi1) * np.cos(phi2) * np.sin(dlambda / 2.0) ** 2
+    c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+    return R * c

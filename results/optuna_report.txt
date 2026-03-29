@@ -1,0 +1,31 @@
+OPTUNA HYPERPARAMETER TUNING REPORT
+==================================================
+
+Study:         ga_uflp_optuna
+Total trials:  5
+Total time:    0.0s
+
+BEST TRIAL (#4)
+  Fitness:    0.852153
+  Coverage:   99.77%
+  Shelters:   2947
+  Infra:      0.8165
+
+  Parameters:
+    pop_size: 40
+    generations: 220
+    mutation_rate: 0.00522839446479576
+    crossover_rate: 0.7482180301114278
+    tournament_size: 5
+    target_shelter_ratio: 0.01029621705066389
+    elitism_count: 3
+    adaptive_mutation: False
+
+
+ALL TRIALS (sorted by fitness):
+--------------------------------------------------
+  Trial   4: fitness=0.852153  cov=99.77%  params={'pop_size': 40, 'generations': 220, 'mutation_rate': 0.00522839446479576, 'crossover_rate': 0.7482180301114278, 'tournament_size': 5, 'target_shelter_ratio': 0.01029621705066389, 'elitism_count': 3, 'adaptive_mutation': False}
+  Trial   2: fitness=0.851395  cov=99.65%  params={'pop_size': 110, 'generations': 120, 'mutation_rate': 0.005551247760834762, 'crossover_rate': 0.7251001300996507, 'tournament_size': 3, 'target_shelter_ratio': 0.006202011094992589, 'elitism_count': 1, 'adaptive_mutation': False}
+  Trial   1: fitness=0.850651  cov=99.63%  params={'pop_size': 120, 'generations': 260, 'mutation_rate': 0.016628730765884656, 'crossover_rate': 0.8180084128415147, 'tournament_size': 7, 'target_shelter_ratio': 0.0031940439698780227, 'elitism_count': 5, 'adaptive_mutation': False}
+  Trial   0: fitness=0.850136  cov=99.36%  params={'pop_size': 50, 'generations': 200, 'mutation_rate': 0.02450701775326265, 'crossover_rate': 0.7078748218297014, 'tournament_size': 5, 'target_shelter_ratio': 0.005344532106663944, 'elitism_count': 1, 'adaptive_mutation': True}
+  Trial   3: fitness=0.849159  cov=99.75%  params={'pop_size': 80, 'generations': 260, 'mutation_rate': 0.029611887249623846, 'crossover_rate': 0.80175451737557, 'tournament_size': 2, 'target_shelter_ratio': 0.0069472739898379715, 'elitism_count': 5, 'adaptive_mutation': False}
