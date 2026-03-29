@@ -259,6 +259,27 @@ def main():
     plot_shelter_map(prep["zip_codes"], best_sol,
                      os.path.join(RESULTS_DIR, "shelter_map.png"))
 
+    # Save a compact GA-vs-Greedy metrics table for quick inspection
+    compare_df = pd.DataFrame([
+        {
+            "method": "GA",
+            "fitness": ga_report["fitness"],
+            "coverage_pct": ga_report["coverage_pct"],
+            "infra_score": ga_report["infra_score"],
+            "n_shelters": ga_report["n_shelters"],
+            "time_sec": round(ga_elapsed, 1),
+        },
+        {
+            "method": "Greedy",
+            "fitness": greedy_report["fitness"],
+            "coverage_pct": greedy_report["coverage_pct"],
+            "infra_score": greedy_report["infra_score"],
+            "n_shelters": greedy_report["n_shelters"],
+            "time_sec": round(greedy_elapsed, 1),
+        },
+    ])
+    compare_df.to_csv(os.path.join(RESULTS_DIR, "ga_vs_greedy_metrics.csv"), index=False)
+
     # Save final results JSON
     final_results = {
         "ga_params": params,

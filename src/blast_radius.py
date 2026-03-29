@@ -120,9 +120,15 @@ def parse_yield(yield_str: str) -> float:
         return 0.0
     s = yield_str.strip().lower().replace(" ", "").replace("\xa0", "")
     if s.endswith("mt"):
-        return float(s[:-2]) * 1000
+        try:
+            return float(s[:-2]) * 1000
+        except ValueError:
+            return 0.0
     elif s.endswith("kt"):
-        return float(s[:-2])
+        try:
+            return float(s[:-2])
+        except ValueError:
+            return 0.0
     else:
         try:
             return float(s)

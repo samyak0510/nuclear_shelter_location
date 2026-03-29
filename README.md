@@ -1,7 +1,7 @@
 # AI-Optimized Nuclear Shelter Siting (UFLP)
 
 ## Overview
-This project applies Genetic Algorithm (GA) optimization to identify optimal geographic locations for nuclear shelters across the United States. The problem is framed as an Uncapacitated Facility Location Problem (UFLP). The objective is to maximize population coverage while ensuring shelters are positioned outside high-risk blast zones (15-mile exclusion radius) and near necessary infrastructure.
+This project applies Genetic Algorithm (GA) optimization to identify optimal geographic locations for nuclear shelters across the United States. The problem is framed as an Uncapacitated Facility Location Problem (UFLP). The objective is to maximize population coverage while ensuring shelters are positioned outside high-risk blast zones (yield-scaled exclusion radius) and near necessary infrastructure.
 
 ## Team Members
 - Murtaza Nipplewala
@@ -51,7 +51,7 @@ nuclear_shelter_location/
 |---|---|
 | **Source** | U.S. Census Bureau |
 | **Download** | [Kaggle – US Population by Zip Code](https://www.kaggle.com/datasets/census/us-population-by-zip-code) |
-| **File** | `usa_population_by_zipcode.csv` |
+| **File** | `population_by_zip_2010.csv` |
 | **Purpose** | Provides zip-code-level population counts used as demand nodes for shelter coverage calculations. |
 
 | Column | Description |
@@ -68,8 +68,8 @@ nuclear_shelter_location/
 |---|---|
 | **Source** | Nuclear War Map (Christopher Minson LLC) |
 | **Download** | [Nuclear War Map – Target List](https://www.nuclearwarmap.com/targetlist.html) |
-| **File** | `usa_nuclear_targets.csv` |
-| **Purpose** | Lists potential nuclear strike targets; used to define the 15-mile exclusion (blast zone) radius around each target. ZIP Codes within this radius are excluded as candidate shelter sites. |
+| **File** | `us_nuclear_targets.xlsx` |
+| **Purpose** | Lists potential nuclear strike targets; used to define yield-scaled blast exclusion radii around each target. ZIP Codes within these radii are excluded as candidate shelter sites. |
 
 | Column | Description |
 |---|---|
@@ -87,7 +87,7 @@ nuclear_shelter_location/
 |---|---|
 | **Source** | The Devastator (Kaggle) |
 | **Download** | [Kaggle – United States Urban Areas Dataset](https://www.kaggle.com/datasets/thedevastator/united-states-urban-areas-dataset?resource=download) |
-| **File** | `usa_urban_areas.csv` |
+| **File** | `Urban_Areas.csv` |
 | **Purpose** | Provides population density and geographic extent of U.S. urban areas; used for infrastructure accessibility scoring and population density weighting. |
 
 | Column | Description |
@@ -100,13 +100,13 @@ nuclear_shelter_location/
 | `Latitude` | Latitude of the urban area centroid |
 | `Longitude` | Longitude of the urban area centroid |
 
-### 4. Road Network Data (OSMnx)
+### 4. Optional Road Network Data (Not used in current pipeline)
 
 | Field | Description |
 |---|---|
 | **Source** | OpenStreetMap via the OSMnx Python library |
 | **Download** | Fetched programmatically using `osmnx` (no static download link) |
-| **Purpose** | Provides U.S. road/transport network graph data for infrastructure accessibility scoring. Proximity to major roads is a factor in the fitness function. |
+| **Purpose** | Potential future extension. The current implementation does **not** use OSM road graph features in preprocessing or fitness scoring. |
 
 | Attribute | Description |
 |---|---|
@@ -117,16 +117,18 @@ nuclear_shelter_location/
 
 ## Brief Explanation of Code
 The system encodes candidate solutions as binary vectors where each bit represents a US Zip Code (1 = Shelter, 0 = No Shelter).
-1. **Initialization**: Generates random populations, masking out unsafe zones (within 15 miles of urban targets).
-2. **Fitness Function**: Evaluates solutions based on total population covered within a service radius, penalizes unsafe placements, and rewards proximity to road infrastructure and urban areas.
+1. **Initialization**: Generates random populations, masking out unsafe zones using yield-scaled blast radii around targets.
+2. **Fitness Function**: Evaluates solutions based on total population covered within a service radius, rewards proximity to urban infrastructure, and penalizes overly expensive solutions (too many shelters).
 3. **Evolution**: Uses tournament selection, uniform crossover, and bit-flip mutation to evolve solutions over generations.
 4. **Evaluation**: Compares final GA results against a Greedy Baseline heuristic.
 
 ## Tools and Dependencies
 This project is built in **Python 3.11+** and packaged with **setuptools** via `pyproject.toml`. Key libraries include:
 - `numpy`, `pandas`: Data manipulation.
-- `geopandas`, `shapely`: Spatial data handling.
-- `osmnx`: Road network data.
+- `scipy`: Sparse matrix acceleration.
+- `optuna`: Bayesian hyperparameter optimization.
+- `pgeocode`: ZIP code geocoding for lat/lon enrichment.
+- `openpyxl`: Excel loader for target data.
 - `matplotlib`: Visualization.
 
 See `pyproject.toml` for the full list of dependencies.
@@ -143,12 +145,10 @@ pip install -e .
 ```
 
 ### 2. Prepare Data
-Place the raw CSV files in the `data/raw/` directory:
-- `usa_population_by_zipcode.csv`
-- `usa_nuclear_targets.csv`
-- `usa_urban_areas.csv`
-
-Road network data is fetched programmatically via OSMnx at runtime.
+Place the raw files in the `data/` directory:
+- `population_by_zip_2010.csv`
+- `us_nuclear_targets.xlsx`
+- `Urban_Areas.csv`
 
 ### 3. Run the Code
 ```bash
@@ -156,5 +156,10 @@ python src/main.py
 ```
 
 ### 4. View Results
-The results will be saved in the `report/` directory.\
-The convergence plot will be saved as `convergence_plot.png`.
+The results are saved in the `results/` directory, including:
+- `convergence_plot.png`
+- `comparison_plot.png` (GA vs Greedy visualization)
+- `shelter_map.png`
+- `ga_vs_greedy_metrics.csv`
+- `final_results.json`
+- `convergence_data.csv`
