@@ -7,7 +7,7 @@ sparse coverage matrix.
 import numpy as np
 import pandas as pd
 from scipy import sparse
-from src.utils import haversine_distance_matrix
+from src.haversine_helpers import haversine_distance_matrix
 from src.blast_radius import blast_radius_miles
 
 
