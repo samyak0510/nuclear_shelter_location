@@ -14,3 +14,6 @@ build/
 # python virtual environment
 venv/
 nsl_venv/
+
+# remove before final
+results/
