@@ -12,13 +12,13 @@ from pathlib import Path
 import pgeocode
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+DATA_DIR = Path(__file__).resolve().parent.parent / "data/raw"
 PROCESSED_DIR = DATA_DIR / "processed"
 
 POP_2000_PATH    = DATA_DIR / "population_by_zip_2000.csv"
 POP_2010_PATH    = DATA_DIR / "population_by_zip_2010.csv"
-TARGETS_PATH     = DATA_DIR / "us_nuclear_targets.xlsx"
-URBAN_AREAS_PATH = DATA_DIR / "Urban_Areas.csv"
+TARGETS_PATH     = DATA_DIR / "usa_nuclear_targets.csv"
+URBAN_AREAS_PATH = DATA_DIR / "usa_urban_areas.csv"
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -96,7 +96,7 @@ def load_census_data(use_cache: bool = True) -> pd.DataFrame:
 
 def load_nuclear_targets() -> pd.DataFrame:
     """
-    Loads US nuclear targets from the Excel file.
+    Loads US nuclear targets from the CSV file.
 
     Returns
     -------
@@ -106,7 +106,7 @@ def load_nuclear_targets() -> pd.DataFrame:
 
     print("Loading Nuclear Targets...")
 
-    df = pd.read_excel(TARGETS_PATH)
+    df = pd.read_csv(TARGETS_PATH)
     df.columns = df.columns.str.strip().str.lower()
 
     # Rename
