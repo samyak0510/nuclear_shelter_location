@@ -25,7 +25,7 @@ from src.data_loader import load_census_data, load_nuclear_targets, load_urban_a
 from src.feature_engineering import features
 from src.fitness import FitnessFunction
 from src.genetic_algo import GeneticAlgorithm
-from src.baseline import greedy_heuristic
+from src.baseline_greedy import greedy_heuristic
 
 # ── Output dir ───────────────────────────────────────────────────────────────
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "results")
