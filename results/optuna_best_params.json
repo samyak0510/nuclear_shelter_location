@@ -1,0 +1,17 @@
+{
+  "best_fitness": 0.8521532653338207,
+  "best_params": {
+    "pop_size": 40,
+    "generations": 220,
+    "mutation_rate": 0.00522839446479576,
+    "crossover_rate": 0.7482180301114278,
+    "tournament_size": 5,
+    "target_shelter_ratio": 0.01029621705066389,
+    "elitism_count": 3,
+    "adaptive_mutation": false
+  },
+  "coverage_pct": 99.77,
+  "n_shelters": 2947,
+  "infra_score": 0.8165,
+  "n_trials": 5
+}

@@ -1,11 +1,19 @@
-print("Script started")
+"""
+data_loader.py — Load and preprocess Census, Nuclear Target, and Urban Area data.
+
+Census CSVs are disaggregated by age/gender; we aggregate total population per
+zip code and attach lat/lon coordinates via pgeocode.  Road-network data is
+intentionally excluded.
+"""
 
 import pandas as pd
 import numpy as np
 from pathlib import Path
+import pgeocode
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-DATA_DIR = Path(__file__).parent.parent / "data"
+# ── Paths ────────────────────────────────────────────────────────────────────
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+PROCESSED_DIR = DATA_DIR / "processed"
 
 POP_2000_PATH    = DATA_DIR / "population_by_zip_2000.csv"
 POP_2010_PATH    = DATA_DIR / "population_by_zip_2010.csv"
@@ -13,139 +21,174 @@ TARGETS_PATH     = DATA_DIR / "us_nuclear_targets.xlsx"
 URBAN_AREAS_PATH = DATA_DIR / "Urban_Areas.csv"
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _normalise_cols(df: pd.DataFrame) -> pd.DataFrame:
     """Lowercase + strip all column names."""
     df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
     return df
 
-def _resolve_col(df: pd.DataFrame, aliases: list[str], target: str) -> pd.DataFrame:
-    """Rename the first matching alias to target."""
-    for alias in aliases:
+
+# ── Public loaders ───────────────────────────────────────────────────────────
+
+def load_census_data(use_cache: bool = True) -> pd.DataFrame:
+    """
+    Loads 2010 ZIP-level population data, aggregates across age/gender rows,
+    and attaches lat/lon coordinates via pgeocode.
+
+    Returns
+    -------
+    DataFrame with columns:
+        zip_code   (str, zero-padded 5-digit)
+        population (int, total population in that ZIP)
+        lat        (float)
+        lon        (float)
+    """
+    cache_path = PROCESSED_DIR / "census_processed.csv"
+    if use_cache and cache_path.exists():
+        print("Loading Census Data from cache...")
+        df = pd.read_csv(cache_path, dtype={"zip_code": str})
+        print(f"  {len(df):,} ZIP codes loaded from cache.")
+        return df
+
+    print("Loading Census Data (this may take a minute on first run)...")
+
+    # ── Read raw 2010 data ──
+    raw = pd.read_csv(POP_2010_PATH, dtype=str)
+    raw.columns = raw.columns.str.strip().str.lower()
+
+    raw["population"] = pd.to_numeric(raw["population"], errors="coerce")
+    raw["zipcode"] = raw["zipcode"].str.strip().str.zfill(5)
+
+    # Aggregate: sum population across all age/gender rows per zip
+    agg = (
+        raw.groupby("zipcode", as_index=False)["population"]
+        .sum()
+        .rename(columns={"zipcode": "zip_code"})
+    )
+
+    # Drop rows with zero or null population
+    agg = agg[agg["population"] > 0].copy()
+    agg["population"] = agg["population"].astype(int)
+
+    print(f"  Aggregated {len(agg):,} ZIP codes from raw data.")
+
+    # ── Attach lat/lon via pgeocode ──
+    print("  Geocoding ZIP codes (pgeocode)...")
+    nomi = pgeocode.Nominatim("US")
+    geo = nomi.query_postal_code(agg["zip_code"].tolist())
+    agg["lat"] = geo["latitude"].values
+    agg["lon"] = geo["longitude"].values
+
+    # Drop ZIP codes that couldn't be geocoded
+    before = len(agg)
+    agg = agg.dropna(subset=["lat", "lon"]).reset_index(drop=True)
+    print(f"  {before - len(agg)} ZIP codes dropped (no coordinates).")
+    print(f"  {len(agg):,} ZIP codes ready.")
+
+    # ── Cache ──
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    agg.to_csv(cache_path, index=False)
+    print(f"  Cached to {cache_path}")
+
+    return agg
+
+
+def load_nuclear_targets() -> pd.DataFrame:
+    """
+    Loads US nuclear targets from the Excel file.
+
+    Returns
+    -------
+    DataFrame with columns: name, lat, lon, category, yield_kt, burst_type
+    """
+    from src.blast_radius import parse_yield, normalise_burst_type
+
+    print("Loading Nuclear Targets...")
+
+    df = pd.read_excel(TARGETS_PATH)
+    df.columns = df.columns.str.strip().str.lower()
+
+    # Rename
+    rename_map = {}
+    if "target" in df.columns:
+        rename_map["target"] = "name"
+    if "lng" in df.columns:
+        rename_map["lng"] = "lon"
+    df = df.rename(columns=rename_map)
+
+    df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
+    df["lon"] = pd.to_numeric(df["lon"], errors="coerce")
+    df = df.dropna(subset=["lat", "lon"]).reset_index(drop=True)
+
+    # Parse yield and burst type for blast radius calculations
+    if "yield" in df.columns:
+        df["yield_kt"] = df["yield"].apply(parse_yield)
+    else:
+        df["yield_kt"] = 500.0  # default assumption
+
+    if "type" in df.columns:
+        df["burst_type"] = df["type"].apply(normalise_burst_type)
+    else:
+        df["burst_type"] = "Surface Burst"
+
+    keep = ["name", "lat", "lon", "yield_kt", "burst_type"]
+    if "category" in df.columns:
+        keep.append("category")
+
+    print(f"  {len(df):,} nuclear targets loaded.")
+    print(f"  Yield range: {df['yield_kt'].min():.0f} – {df['yield_kt'].max():.0f} kt")
+    print(f"  Burst types: {df['burst_type'].value_counts().to_dict()}")
+    return df[keep]
+
+
+def load_urban_areas() -> pd.DataFrame:
+    """
+    Loads urban area centroids and land area metadata.
+
+    Returns
+    -------
+    DataFrame with columns: name, lat, lon
+    """
+    print("Loading Urban Areas...")
+
+    df = pd.read_csv(URBAN_AREAS_PATH, dtype=str)
+    df.columns = df.columns.str.strip().str.lower()
+
+    # Resolve column names
+    col_map = {}
+    for alias in ["name10", "namelsad10", "name"]:
         if alias in df.columns:
-            return df.rename(columns={alias: target})
-    return df
+            col_map[alias] = "name"
+            break
+    for alias in ["intptlat10", "lat", "latitude"]:
+        if alias in df.columns:
+            col_map[alias] = "lat"
+            break
+    for alias in ["intptlon10", "lon", "lng", "longitude"]:
+        if alias in df.columns:
+            col_map[alias] = "lon"
+            break
 
-
-# ── Public loaders ────────────────────────────────────────────────────────────
-
-def load_census_data() -> pd.DataFrame:
-    """
-    Loads and merges 2000 + 2010 ZIP-level population data.
-
-    Returns
-    -------
-    DataFrame with columns:
-        zip_code (str, zero-padded)
-        population_2000 (float)
-        population_2010 (float)
-        lat (float)
-        lon (float)
-    """
-    print("Loading Census Data...")
-
-    # ── 2000 ──
-    df00 = _normalise_cols(pd.read_csv(POP_2000_PATH, dtype=str))
-    df00 = _resolve_col(df00, ["zipcode", "zip", "zcta"], "zip_code")
-    df00 = _resolve_col(df00, ["population", "pop", "total_population"], "population_2000")
-    df00["zip_code"]        = df00["zip_code"].str.zfill(5)
-    df00["population_2000"] = pd.to_numeric(df00["population_2000"], errors="coerce")
-    df00 = df00[["zip_code", "population_2000"]].dropna()
-
-    # ── 2010 ──
-    df10 = _normalise_cols(pd.read_csv(POP_2010_PATH, dtype=str))
-    df10 = _resolve_col(df10, ["zipcode", "zip", "zcta"], "zip_code")
-    df10 = _resolve_col(df10, ["population", "pop", "total_population"], "population_2010")
-    df10 = _resolve_col(df10, ["lat", "latitude", "y"], "lat")
-    df10 = _resolve_col(df10, ["lon", "lng", "longitude", "x"], "lon")
-    df10["zip_code"]        = df10["zip_code"].str.zfill(5)
-    df10["population_2010"] = pd.to_numeric(df10["population_2010"], errors="coerce")
-
-    keep = ["zip_code", "population_2010"]
-    for col in ["lat", "lon"]:
-        if col in df10.columns:
-            df10[col] = pd.to_numeric(df10[col], errors="coerce")
-            keep.append(col)
-    df10 = df10[keep].dropna(subset=["zip_code", "population_2010"])
-
-    # ── Merge ──
-    df = pd.merge(df00, df10, on="zip_code", how="outer")
-
-    print(f"  {len(df):,} ZIP codes loaded (2000 + 2010 merged).")
-    return df.reset_index(drop=True)
-
-
-def load_urban_targets() -> list[dict]:
-    """
-    Loads US nuclear targets from Excel file.
-
-    Returns
-    -------
-    List of dicts, each with keys: name, lat, lon
-    (matches the original skeleton's return format exactly)
-    """
-    print("Loading Urban Targets...")
-
-    df = _normalise_cols(pd.read_excel(TARGETS_PATH))
-    df = _resolve_col(df, ["city", "target", "location", "place"], "name")
-    df = _resolve_col(df, ["lat", "latitude", "y"], "lat")
-    df = _resolve_col(df, ["lon", "lng", "longitude", "x"], "lon")
-
+    df = df.rename(columns=col_map)
     df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
     df["lon"] = pd.to_numeric(df["lon"], errors="coerce")
-    df = df.dropna(subset=["lat", "lon"])
-
-    targets = df[["name", "lat", "lon"]].to_dict(orient="records")
-
-    print(f"  {len(targets):,} nuclear targets loaded.")
-    return targets
-
-
-def load_infrastructure_data() -> pd.DataFrame:
-    """
-    Loads urban area data (used as a proxy for infrastructure/accessibility).
-
-    Returns
-    -------
-    DataFrame with columns:
-        name (str)
-        lat (float)
-        lon (float)
-    """
-    print("Loading Infrastructure Data...")
-
-    df = _normalise_cols(pd.read_csv(URBAN_AREAS_PATH, dtype=str))
-    df = _resolve_col(df, ["name10", "namelsad10", "city", "urban_area", "place", "area_name"], "name")
-    df = _resolve_col(df, ["intptlat10", "lat", "latitude", "y"], "lat")
-    df = _resolve_col(df, ["intptlon10", "lon", "lng", "longitude", "x"], "lon")
-    df = _resolve_col(df, ["population", "pop", "total_population"], "population")
-
-    df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
-    df["lon"] = pd.to_numeric(df["lon"], errors="coerce")
-    df = df.dropna(subset=["lat", "lon"])
-
-    keep = ["name", "lat", "lon"]
-    if "population" in df.columns:
-        df["population"] = pd.to_numeric(df["population"], errors="coerce")
-        keep.append("population")
+    df = df.dropna(subset=["lat", "lon"]).reset_index(drop=True)
 
     print(f"  {len(df):,} urban areas loaded.")
-    return df[keep].reset_index(drop=True)
+    return df[["name", "lat", "lon"]]
 
-
-# ── Combined loader (optional convenience) ────────────────────────────────────
 
 def load_all() -> dict:
     """Loads all datasets and returns them in a single dict."""
     return {
         "census":      load_census_data(),
-        "targets":     load_urban_targets(),
-        "urban_areas": load_infrastructure_data(),
+        "targets":     load_nuclear_targets(),
+        "urban_areas": load_urban_areas(),
     }
 
 
-# ── Quick test ────────────────────────────────────────────────────────────────
+# ── Quick test ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     data = load_all()
@@ -153,9 +196,8 @@ if __name__ == "__main__":
     print("\n── Census (first 5 rows) ──")
     print(data["census"].head())
 
-    print("\n── Targets (first 5) ──")
-    for t in data["targets"][:5]:
-        print(t)
+    print("\n── Targets (first 5 rows) ──")
+    print(data["targets"].head())
 
     print("\n── Urban Areas (first 5 rows) ──")
     print(data["urban_areas"].head())

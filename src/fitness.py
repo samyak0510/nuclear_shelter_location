@@ -1,69 +1,126 @@
+"""
+fitness.py — Vectorized fitness evaluation for the UFLP Genetic Algorithm.
+
+Uses the pre-computed sparse coverage matrix so each evaluation is O(nnz)
+instead of O(N²).
+"""
+
 import numpy as np
-from src.utils import haversine_distance
+from scipy import sparse
+
 
 class FitnessFunction:
-    def __init__(self, zip_codes, targets, infrastructure_scores, service_radius=50):
-        self.zip_codes = zip_codes
-        self.targets = targets
-        self.infra_scores = infrastructure_scores
-        self.service_radius = service_radius
-        self.populations = zip_codes['population'].values
-        self.lats = zip_codes['lat'].values
-        self.lons = zip_codes['lon'].values
-        
-        # Pre-calculate safety mask (Hard Constraint)
-        # 1 = Safe, 0 = Unsafe
-        self.safety_mask = self._compute_safety_mask()
+    """
+    Evaluates a binary chromosome representing shelter placements.
 
-    def _compute_safety_mask(self):
-        """Identify zip codes within 15-mile blast zone."""
-        mask = np.ones(len(self.zip_codes), dtype=bool)
-        for i in range(len(self.zip_codes)):
-            for target in self.targets:
-                dist = haversine_distance(self.lats[i], self.lons[i], target['lat'], target['lon'])
-                if dist < 15: # 15-mile exclusion
-                    mask[i] = False
-                    break
-        return mask
+    Fitness = w_cov * (covered_population / total_population)
+            + w_infra * mean_infrastructure_score_of_selected_shelters
+            - w_cost * (num_shelters / total_candidates)
+
+    All components are normalised to [0, 1] so weights are directly
+    interpretable.
+    """
+
+    def __init__(self, populations, coverage_matrix, infra_scores,
+                 w_cov=0.7, w_infra=0.2, w_cost=0.1):
+        """
+        Parameters
+        ----------
+        populations     : 1-D array (N,) — population of each candidate ZIP
+        coverage_matrix : sparse bool (N, N) — coverage[i,j]=True if zip i
+                          is covered by a shelter at zip j
+        infra_scores    : 1-D array (N,) — infrastructure score in [0,1]
+        w_cov           : weight for population-coverage term
+        w_infra         : weight for infrastructure-accessibility term
+        w_cost          : weight for cost (shelter count) penalty
+        """
+        self.populations = populations.astype(np.float64)
+        self.total_pop = populations.sum()
+        self.coverage = coverage_matrix          # sparse (N, N)
+        self.infra = infra_scores.astype(np.float64)
+        self.n = len(populations)
+
+        self.w_cov = w_cov
+        self.w_infra = w_infra
+        self.w_cost = w_cost
 
     def evaluate(self, chromosome):
         """
-        Chromosome: Binary array (1 = shelter built, 0 = no shelter)
-        Returns: Fitness score (Higher is better)
+        Evaluate a single binary chromosome.
+
+        Returns
+        -------
+        float — fitness score (higher is better)
         """
-        # 1. Hard Constraint Check: Penalty if shelter built in unsafe zone
-        unsafe_placement = np.sum(chromosome * (~self.safety_mask))
-        if unsafe_placement > 0:
-            return -1000 * unsafe_placement # Heavy penalty
+        selected = np.where(chromosome == 1)[0]
+        n_shelters = len(selected)
 
-        # 2. Population Coverage
-        # For each zip code, find if there is a shelter within service_radius
-        total_covered_pop = 0
-        selected_indices = np.where(chromosome == 1)[0]
-        
-        if len(selected_indices) == 0:
-            return 0
+        if n_shelters == 0:
+            return 0.0
 
-        # Simplified coverage calculation (O(N*M) - optimize for final)
-        for i in range(len(self.zip_codes)):
-            covered = False
-            for s_idx in selected_indices:
-                dist = haversine_distance(self.lats[i], self.lons[i], 
-                                          self.lats[s_idx], self.lons[s_idx])
-                if dist <= self.service_radius:
-                    covered = True
-                    break
-            if covered:
-                total_covered_pop += self.populations[i]
-        
-        # 3. Infrastructure Accessibility (Average score of selected shelters)
-        if len(selected_indices) > 0:
-            avg_infra = np.mean(self.infra_scores[selected_indices])
-        else:
-            avg_infra = 0
-            
-        # Weighted Fitness
-        # Weights can be tuned. Coverage is primary, Infra is secondary.
-        fitness = (total_covered_pop / 1000) + (avg_infra * 100)
-        
+        # 1. Coverage: which ZIPs are covered by at least one selected shelter?
+        # coverage[:, selected] is (N, k) — take any-per-row
+        covered_mask = np.array(
+            self.coverage[:, selected].sum(axis=1)
+        ).flatten() > 0
+
+        covered_pop = self.populations[covered_mask].sum()
+        coverage_ratio = covered_pop / self.total_pop if self.total_pop > 0 else 0.0
+
+        # 2. Infrastructure accessibility of selected sites
+        infra_score = self.infra[selected].mean()
+
+        # 3. Cost penalty (fewer shelters is better, all else equal)
+        cost_ratio = n_shelters / self.n
+
+        fitness = (self.w_cov   * coverage_ratio
+                 + self.w_infra * infra_score
+                 - self.w_cost  * cost_ratio)
+
         return fitness
+
+    def evaluate_batch(self, population_matrix):
+        """
+        Evaluate an entire population at once.
+
+        Parameters
+        ----------
+        population_matrix : 2-D array (pop_size, N)
+
+        Returns
+        -------
+        scores : 1-D array (pop_size,)
+        """
+        return np.array([self.evaluate(ind) for ind in population_matrix])
+
+    def detailed_report(self, chromosome):
+        """Return a breakdown dict for a solution."""
+        selected = np.where(chromosome == 1)[0]
+        n_shelters = len(selected)
+
+        if n_shelters == 0:
+            return {"n_shelters": 0, "covered_pop": 0, "coverage_pct": 0,
+                    "infra_score": 0, "cost_ratio": 0, "fitness": 0}
+
+        covered_mask = np.array(
+            self.coverage[:, selected].sum(axis=1)
+        ).flatten() > 0
+        covered_pop = self.populations[covered_mask].sum()
+        coverage_pct = covered_pop / self.total_pop * 100
+
+        infra_score = self.infra[selected].mean()
+        cost_ratio = n_shelters / self.n
+
+        fitness = (self.w_cov * (covered_pop / self.total_pop)
+                 + self.w_infra * infra_score
+                 - self.w_cost * cost_ratio)
+
+        return {
+            "n_shelters":   n_shelters,
+            "covered_pop":  int(covered_pop),
+            "total_pop":    int(self.total_pop),
+            "coverage_pct": round(coverage_pct, 2),
+            "infra_score":  round(infra_score, 4),
+            "cost_ratio":   round(cost_ratio, 6),
+            "fitness":      round(fitness, 6),
+        }
