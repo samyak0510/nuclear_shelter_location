@@ -37,10 +37,14 @@ DEFAULT_GA_PARAMS = {
     "generations": 200,
     "mutation_rate": 0.02,
     "crossover_rate": 0.85,
-    "tournament_size": 3,
+    "tournament_size": 2,
     "target_shelter_ratio": 0.01,
-    "elitism_count": 2,
+    "elitism_count": 1,
     "adaptive_mutation": True,
+    "seed_fraction": 0.25,
+    "seed_perturb_swaps": 4,
+    "local_search_elites": 3,
+    "local_search_steps": 12,
 }
 
 
@@ -59,6 +63,12 @@ def load_best_params() -> dict:
         print("  No Optuna results found — using default GA parameters.")
         print("  Run `python src/optuna_tuning.py` first for tuned params.")
         return DEFAULT_GA_PARAMS.copy()
+
+
+def ratio_to_fixed_k(n_genes: int, target_ratio: float) -> int:
+    """Convert target ratio to an exact shelter budget K for fixed-K GA."""
+    k = int(round(float(target_ratio) * n_genes))
+    return max(1, min(n_genes, k))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -189,21 +199,57 @@ def main():
     print("   RUNNING GENETIC ALGORITHM")
     print("=" * 60)
 
+    target_ratio = params.get("target_shelter_ratio", 0.01)
+    fixed_k = ratio_to_fixed_k(prep["n_genes"], target_ratio)
+    print(f"  Fixed-K budget: {fixed_k} shelters ({target_ratio:.4%} of candidates)")
+
+    print("  Building greedy seed solution for GA initialisation...")
+    seed_t0 = time.time()
+    greedy_seed_sol, _ = greedy_heuristic(
+        prep["populations"],
+        prep["coverage_matrix"],
+        prep["infra_scores"],
+        max_shelters=fixed_k,
+    )
+    greedy_seed_elapsed = time.time() - seed_t0
+
+    ga_config = {
+        "pop_size": int(params.get("pop_size", 80)),
+        "generations": int(params.get("generations", 200)),
+        "mutation_rate": float(params.get("mutation_rate", 0.02)),
+        "crossover_rate": float(params.get("crossover_rate", 0.85)),
+        "tournament_size": max(2, min(4, int(params.get("tournament_size", 2)))),
+        "target_shelter_ratio": float(params.get("target_shelter_ratio", 0.01)),
+        "elitism_count": max(1, min(3, int(params.get("elitism_count", 1)))),
+        "adaptive_mutation": bool(params.get("adaptive_mutation", True)),
+        "seed_fraction": float(params.get("seed_fraction", 0.25)),
+        "seed_perturb_swaps": int(params.get("seed_perturb_swaps", 4)),
+        "local_search_elites": int(params.get("local_search_elites", 3)),
+        "local_search_steps": int(params.get("local_search_steps", 12)),
+        "fixed_k": fixed_k,
+    }
+
     t0 = time.time()
     ga = GeneticAlgorithm(
         n_genes=prep["n_genes"],
         fitness_func=fitness_obj.evaluate,
-        pop_size=params.get("pop_size", 80),
-        generations=params.get("generations", 200),
-        mutation_rate=params.get("mutation_rate", 0.02),
-        crossover_rate=params.get("crossover_rate", 0.85),
-        tournament_size=params.get("tournament_size", 3),
-        target_shelter_ratio=params.get("target_shelter_ratio", 0.01),
-        elitism_count=params.get("elitism_count", 2),
-        adaptive_mutation=params.get("adaptive_mutation", True),
+        pop_size=ga_config["pop_size"],
+        generations=ga_config["generations"],
+        mutation_rate=ga_config["mutation_rate"],
+        crossover_rate=ga_config["crossover_rate"],
+        tournament_size=ga_config["tournament_size"],
+        target_shelter_ratio=ga_config["target_shelter_ratio"],
+        elitism_count=ga_config["elitism_count"],
+        adaptive_mutation=ga_config["adaptive_mutation"],
+        fixed_k=ga_config["fixed_k"],
+        seed_solution=greedy_seed_sol,
+        seed_fraction=ga_config["seed_fraction"],
+        seed_perturb_swaps=ga_config["seed_perturb_swaps"],
+        local_search_elites=ga_config["local_search_elites"],
+        local_search_steps=ga_config["local_search_steps"],
         seed=42,
     )
-    best_sol, best_fit = ga.evolve()
+    best_sol, _best_fit = ga.evolve()
     ga_elapsed = time.time() - t0
     ga_report = fitness_obj.detailed_report(best_sol)
 
@@ -213,14 +259,19 @@ def main():
     print("=" * 60)
 
     max_shelters_greedy = ga_report["n_shelters"]
-    t0 = time.time()
-    greedy_sol, greedy_fit = greedy_heuristic(
-        prep["populations"],
-        prep["coverage_matrix"],
-        prep["infra_scores"],
-        max_shelters=max_shelters_greedy,
-    )
-    greedy_elapsed = time.time() - t0
+    if max_shelters_greedy == fixed_k:
+        print("  Reusing greedy seed run for baseline (same budget).")
+        greedy_sol = greedy_seed_sol
+        greedy_elapsed = greedy_seed_elapsed
+    else:
+        t0 = time.time()
+        greedy_sol, _greedy_fit = greedy_heuristic(
+            prep["populations"],
+            prep["coverage_matrix"],
+            prep["infra_scores"],
+            max_shelters=max_shelters_greedy,
+        )
+        greedy_elapsed = time.time() - t0
     greedy_report = fitness_obj.detailed_report(greedy_sol)
 
     # ── 7. Results Summary ──
@@ -228,8 +279,8 @@ def main():
     print("   FINAL RESULTS")
     print("=" * 60)
 
-    print(f"\n  GA Configuration:")
-    for k, v in params.items():
+    print(f"\n  GA Configuration (effective):")
+    for k, v in ga_config.items():
         print(f"    {k}: {v}")
 
     print(f"\n  GA Performance (time: {ga_elapsed:.1f}s):")
