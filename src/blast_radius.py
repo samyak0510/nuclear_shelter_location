@@ -32,7 +32,6 @@ Usage in the GA safety mask:
 """
 
 import math
-import numpy as np
 from typing import Literal
 
 # ── Reference radii at 1 kt, surface burst (miles) ──────────────────────
@@ -98,49 +97,6 @@ def blast_radius_km(
 ) -> float:
     """Same as blast_radius_miles but returns kilometres."""
     return blast_radius_miles(yield_kt, threshold, burst_type) * 1.60934
-
-
-def parse_yield(yield_str: str) -> float:
-    """
-    Parse the Yield column from the nuclear targets CSV.
-
-    Handles formats like '500kt', '1000 kt', '1.2Mt', '800 Kt'.
-
-    Parameters
-    ----------
-    yield_str : str
-        Raw yield string from the dataset.
-
-    Returns
-    -------
-    float
-        Yield in kilotons.
-    """
-    if not isinstance(yield_str, str):
-        return 0.0
-    s = yield_str.strip().lower().replace(" ", "").replace("\xa0", "")
-    if s.endswith("mt"):
-        return float(s[:-2]) * 1000
-    elif s.endswith("kt"):
-        return float(s[:-2])
-    else:
-        try:
-            return float(s)
-        except ValueError:
-            return 0.0
-
-
-def normalise_burst_type(burst_str: str) -> str:
-    """
-    Normalise the Type column (handles non-breaking spaces, case, etc.)
-    Returns 'Air Burst' or 'Surface Burst'.
-    """
-    if not isinstance(burst_str, str):
-        return "Surface Burst"
-    s = burst_str.replace("\xa0", " ").strip().lower()
-    if "air" in s:
-        return "Air Burst"
-    return "Surface Burst"
 
 
 # ── Quick demo ───────────────────────────────────────────────────────────

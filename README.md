@@ -148,6 +148,8 @@ Place the raw CSV files in the `data/raw/` directory:
 - `usa_nuclear_targets.csv`
 - `usa_urban_areas.csv`
 
+Downloadable from [Google Drive](https://drive.google.com/drive/folders/12382emZELnVMWiT-rDWt07Etyb3DYlzj?usp=drive_link)
+
 Road network data is fetched programmatically via OSMnx at runtime.
 
 ### 3. Run the Code
